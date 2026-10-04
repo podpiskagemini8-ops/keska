@@ -1,5 +1,6 @@
 """Run business tests in disposable schemas, never touching production rows."""
 import io
+import re
 from pathlib import Path
 import sys
 import unittest
@@ -41,6 +42,10 @@ def check(url):
         if not result.wasSuccessful():
             # Don't print database errors or tracebacks containing credentials.
             print('PostgreSQL check failed: ' + ', '.join(test.id() for test, _ in result.errors + result.failures))
+            for test, detail in (result.errors + result.failures)[:2]:
+                summary = detail.strip().splitlines()[-1]
+                summary = re.sub(r'postgres(?:ql)?://\S+', '[connection hidden]', summary)
+                print(test.id() + ': ' + summary)
             raise RuntimeError('PostgreSQL compatibility checks failed')
         print(f'PostgreSQL compatibility: {result.testsRun} tests passed.')
     finally:
