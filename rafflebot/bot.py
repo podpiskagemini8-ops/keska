@@ -154,17 +154,41 @@ class Bot:
         self.store.session(uid, {"field": "channel"})
         self.say(uid, "⚙️ <b>Создание розыгрыша</b>\n\n1. Добавьте бота в канал администратором с правом «Публикация сообщений».\n2. Перешлите сюда любое сообщение из канала.\n\n💡 Можно прислать @username или ссылку на канал.", keyboard([button("❌ Отмена", "home", style="danger")]))
 
-    def repeat(self, uid, r, mid=None):
-        if r['status'] not in ('finished', 'canceled'):
-            raise ValueError('Повторно запустить можно завершённый или отменённый розыгрыш.')
+    @staticmethod
+    def configuration(r):
         fields = ('channel', 'title', 'post', 'winners', 'prizes', 'prize_emojis',
                   'mode', 'target', 'conditions', 'referrals', 'referral_bonus',
                   'require_username', 'notify_losers', 'contact', 'button', 'extra',
                   'show_count', 'reminder', 'reminder_minutes', 'pin', 'initial_participants')
-        data = {key: r[key] for key in fields if key in r}
+        data = json.loads(json.dumps({key: r[key] for key in fields if key in r}))
         data.update(deadline=None, seed=new_seed(), copied_from=r['id'])
+        return data
+
+    def repeat(self, uid, r, mid=None):
+        if r['status'] not in ('finished', 'canceled'):
+            raise ValueError('Повторно запустить можно завершённый или отменённый розыгрыш.')
+        data = self.configuration(r)
         draft = self.store.create(uid, data)
         return self.menu(uid, draft, mid)
+
+    def configuration_list(self, uid, r, page=0, mid=None):
+        self.store.session(uid, {})
+        items = [item for item in self.store.list(owner=uid)
+                 if item['id'] != r['id'] and item['status'] in ('draft', 'active', 'finished', 'canceled')]
+        page = max(0, min(page, max(0, (len(items) - 1) // 8)))
+        rows = [[button(f"#{item['id']} {item['title'][:36]}", f"g:{r['id']}:loadfrom:{item['id']}")]
+                for item in items[page * 8:page * 8 + 8]]
+        nav = []
+        if page:
+            nav.append(button('⬅️', f"g:{r['id']}:loadconfig:{page - 1}"))
+        if (page + 1) * 8 < len(items):
+            nav.append(button('➡️', f"g:{r['id']}:loadconfig:{page + 1}"))
+        if nav:
+            rows.append(nav)
+        rows.append([button('⬅️ Назад', f"g:{r['id']}:menu")])
+        self.say(uid, '📂 <b>Загрузить конфигурацию</b>\n\n' +
+                 ('Выберите свой предыдущий розыгрыш. Пост, призы и настройки будут перенесены в этот черновик. Канал останется текущим; дату итогов нужно задать заново.'
+                  if items else 'Других сохранённых розыгрышей пока нет.'), keyboard(*rows), mid)
 
     def menu(self, uid, r, mid=None):
         self.store.session(uid, {})
@@ -185,6 +209,7 @@ class Bot:
                 if r['mode'] == 'time' and not r.get('deadline'):
                     text += '\n📅 Укажите новую дату итогов перед публикацией.'
             rows = [
+                [button('📂 Загрузить конфигурацию', cb('loadconfig'))],
                 [button("🖼 Пост розыгрыша" if r.get("post") else "❗ Пост розыгрыша — не задан", cb("post"), style=None if r.get("post") else "danger")],
                 [button("✏️ Текст поста", cb("caption"))],
                 [button(f"🏆 Победителей: {r['winners']}", cb("winners")), button("🎁 Призы", cb("prizes"))],
@@ -782,6 +807,21 @@ class Bot:
             return self.menu(uid, self.store.get(rid), mid)
         if r["status"] != "draft":
             raise ValueError("После публикации настройки зафиксированы. Откройте «Мои розыгрыши».")
+        if action == 'loadconfig':
+            return self.configuration_list(uid, r, int(parts[3]) if len(parts) > 3 else 0, mid)
+        if action in ('loadfrom', 'confirmload'):
+            source = self.store.get(int(parts[3]))
+            if not source or source['owner'] != uid or source['id'] == rid or source['status'] not in ('draft', 'active', 'finished', 'canceled'):
+                raise ValueError('Этот розыгрыш недоступен для загрузки конфигурации.')
+            if action == 'loadfrom':
+                return self.say(uid, f"📂 Загрузить настройки из <b>#{source['id']} {esc(source['title'])}</b>?\n\nПост, призы и настройки текущего черновика будут заменены. Канал останется «{esc(r['channel']['title'])}». Участники и результаты не переносятся. Для итогов по времени задайте новую дату.",
+                                keyboard([button('✅ Загрузить', f"g:{rid}:confirmload:{source['id']}")],
+                                         [button('⬅️ Назад', f'g:{rid}:loadconfig')]), mid)
+            data = self.configuration(source)
+            data['channel'] = r['channel']
+            draft = {**data, 'id': rid, 'owner': uid, 'status': 'draft'}
+            self.store.save(draft)
+            return self.menu(uid, draft, mid)
         if action in ("winners", "prizes", "prizeemoji", "timing", "conditions", "bonuses", "guard", "extra", "promo"):
             self.store.session(uid, {})
             return self.settings(uid, r, action, mid)

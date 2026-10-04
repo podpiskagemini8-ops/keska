@@ -131,6 +131,44 @@ class BotTests(unittest.TestCase):
             self.bot.callback(OWNER, f"g:{draft['id']}:repeat", 1)
         self.assertEqual(len(self.store.list(owner=1)), 2)
 
+    def test_load_configuration_into_existing_draft_keeps_channel(self):
+        self.configure('post', 'Старый пост')
+        self.r.update(status='finished', winners=3, prizes={'all': 'Приз'},
+                      conditions=[dict(CHANNEL)], deadline=123, message_id=777,
+                      winning_users=[2], proof={'old': True})
+        self.store.save(self.r)
+        original = self.store.get(self.r['id'])
+        target = self.store.create(1, self.bot.configuration(original))
+        target['channel'] = {**CHANNEL, 'id': -1009999999999, 'title': 'Новый канал'}
+        target['prize_emojis'] = [{'start': 1, 'end': 3, 'id': '123'}]
+        self.store.save(target)
+        self.bot.callback(OWNER, f"g:{target['id']}:loadfrom:{original['id']}", 1)
+        self.assertEqual(self.store.get(target['id'])['prize_emojis'], target['prize_emojis'])
+        self.bot.callback(OWNER, f"g:{target['id']}:confirmload:{original['id']}", 1)
+        loaded = self.store.get(target['id'])
+        self.assertEqual(loaded['channel'], target['channel'])
+        for key in ('post', 'prizes', 'winners', 'conditions'):
+            self.assertEqual(loaded[key], original[key])
+        self.assertIsNone(loaded['deadline'])
+        for key in ('prize_emojis', 'proof', 'winning_users', 'message_id'):
+            self.assertNotIn(key, loaded)
+        self.assertEqual(self.store.get(original['id']), original)
+        self.assertEqual(self.store.count(target['id']), 0)
+
+    def test_configuration_picker_and_load_are_owner_only(self):
+        own = self.store.create(1, self.bot.configuration(self.r))
+        other = self.store.create(2, self.bot.configuration(self.r))
+        self.bot.callback(OWNER, f"g:{self.r['id']}:loadconfig", 1)
+        buttons = self.api.calls[-1][1]['reply_markup']['inline_keyboard']
+        data = [b.get('callback_data') for row in buttons for b in row]
+        self.assertIn(f"g:{self.r['id']}:loadfrom:{own['id']}", data)
+        self.assertNotIn(f"g:{self.r['id']}:loadfrom:{other['id']}", data)
+        with self.assertRaisesRegex(ValueError, 'недоступен'):
+            self.bot.callback(OWNER, f"g:{self.r['id']}:confirmload:{other['id']}", 1)
+        self.r['status'] = 'active'
+        self.store.save(self.r)
+        with self.assertRaisesRegex(ValueError, 'зафиксированы'):
+            self.bot.callback(OWNER, f"g:{self.r['id']}:confirmload:{own['id']}", 1)
     def test_channel_admin_check(self):
         self.api.members[2] = {"status": "member"}
         with self.assertRaisesRegex(ValueError, "администратор"):
