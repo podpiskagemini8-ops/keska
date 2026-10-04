@@ -53,6 +53,9 @@ class Application:
         if self.store.postgres and not self.leader:
             self.leader = bool(self.store.db.execute('SELECT pg_try_advisory_lock(?)', (self.lock_key,)).fetchone()[0])
             if not self.leader:
+                # The new instance can persist incoming updates while the old
+                # deploy drains. Healthy standby lets Render stop the old one.
+                self.ready = True
                 return False
         me = self.api.call('getMe')
         self.api.call('setWebhook', url=self.webhook_url, secret_token=self.secret,
