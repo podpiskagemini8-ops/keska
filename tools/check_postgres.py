@@ -27,11 +27,7 @@ def check(url):
         schema = 'check_' + uuid.uuid4().hex
         control.execute(sql.SQL('CREATE SCHEMA {}').format(sql.Identifier(schema)))
         schemas.append(schema)
-        parts = urlsplit(url)
-        query = dict(parse_qsl(parts.query))
-        query['options'] = '-c search_path=' + schema
-        isolated = urlunsplit(parts._replace(query=urlencode(query)))
-        return Store(isolated)
+        return Store(url, schema=schema)
     try:
         suite = unittest.TestSuite()
         for module in (test_bot, test_admin):

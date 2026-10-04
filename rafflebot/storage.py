@@ -5,11 +5,14 @@ from pathlib import Path
 
 
 class Store:
-    def __init__(self, path):
+    def __init__(self, path, schema=None):
         self.postgres = path.startswith(('postgres://', 'postgresql://'))
         if self.postgres:
             from .postgres import Connection
             self.db = Connection(path)
+            if schema:
+                from psycopg import sql
+                self.db.connection.execute(sql.SQL('SET search_path TO {}').format(sql.Identifier(schema)))
         elif path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         if not self.postgres:
