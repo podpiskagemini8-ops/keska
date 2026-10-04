@@ -6,10 +6,15 @@ from pathlib import Path
 
 class Store:
     def __init__(self, path):
-        if path != ":memory:":
+        self.postgres = path.startswith(('postgres://', 'postgresql://'))
+        if self.postgres:
+            from .postgres import Connection
+            self.db = Connection(path)
+        elif path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = sqlite3.connect(path)
-        self.db.row_factory = sqlite3.Row
+        if not self.postgres:
+            self.db = sqlite3.connect(path, check_same_thread=False)
+            self.db.row_factory = sqlite3.Row
         self.db.executescript("""
         PRAGMA journal_mode=WAL;
         PRAGMA foreign_keys=ON;
@@ -33,8 +38,12 @@ class Store:
             task_key TEXT UNIQUE NOT NULL, method TEXT NOT NULL, params TEXT NOT NULL,
             state TEXT NOT NULL DEFAULT 'pending', next_attempt INTEGER NOT NULL DEFAULT 0,
             attempts INTEGER NOT NULL DEFAULT 0, error TEXT);
+        CREATE TABLE IF NOT EXISTS webhook_updates(
+            id INTEGER PRIMARY KEY, data TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'pending', created INTEGER NOT NULL);
         """)
-        columns = {row[1] for row in self.db.execute('PRAGMA table_info(users)')}
+        columns = ({row[0] for row in self.db.execute("SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='users'")}
+                   if self.postgres else {row[1] for row in self.db.execute('PRAGMA table_info(users)')})
         with self.db:
             for name, definition in [('first_seen', 'INTEGER NOT NULL DEFAULT 0'), ('last_seen', 'INTEGER NOT NULL DEFAULT 0'), ('can_message', 'INTEGER NOT NULL DEFAULT 1')]:
                 if name not in columns:
@@ -120,3 +129,11 @@ class Store:
 
     def pending(self, limit=10):
         return self.db.execute("SELECT * FROM outbox WHERE state='pending' AND next_attempt<=? ORDER BY id LIMIT ?", (int(time.time()), limit)).fetchall()
+
+    def receive_update(self, update):
+        with self.db:
+            self.db.execute("INSERT OR IGNORE INTO webhook_updates(id,data,created) VALUES(?,?,?)",
+                            (update['update_id'], json.dumps(update), int(time.time())))
+
+    def pending_updates(self):
+        return self.db.execute("SELECT * FROM webhook_updates WHERE state='pending' ORDER BY id LIMIT 20").fetchall()

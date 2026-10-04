@@ -2,6 +2,8 @@
 
 Бот: [@randomgoodgift_bot](https://t.me/randomgoodgift_bot).
 
+Запуск на бесплатном Render Web Service с внешней PostgreSQL-базой: [инструкция](RENDER.md). Для компьютера сохраняется режим SQLite.
+
 ## Пользование
 
 1. Откройте бота и нажмите **Start** или отправьте `/start`.

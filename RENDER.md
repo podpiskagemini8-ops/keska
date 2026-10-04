@@ -1,29 +1,65 @@
-# Запуск на Render
+# Бесплатный Web Service на Render
 
-1. В Render нажмите **New → Blueprint** и подключите репозиторий `podpiskagemini8-ops/keska`.
-2. Render прочитает `render.yaml`: один **Background Worker** и постоянный диск на 1 ГБ. Это платный сервис; стоимость показывается перед созданием.
-3. Введите токен вашего бота в **BOT_TOKEN**. Не добавляйте его в GitHub.
-4. Перед запуском сервиса остановите бота на компьютере и отключите его автозапуск:
+Бот поддерживает два режима: `python run.py` для компьютера (SQLite, polling) и `python -m rafflebot.web` для Render (PostgreSQL, webhook). Данные Render хранятся во внешней базе.
 
-   ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\stop-bot.ps1
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\remove-autostart.ps1
-   ```
+## Настройка
 
-5. Создайте сервис. В **Logs** должно появиться `Bot @... started`. Откройте бота и отправьте `/start`.
+1. Создайте отдельный бесплатный PostgreSQL-проект в [Neon](https://console.neon.tech). Скопируйте **прямую** строку подключения с `sslmode=require` (Connection pooling выключен). Прямое соединение нужно для блокировки одновременных запусков.
+2. В Render: **New → Web Service → podpiskagemini8-ops/keska**.
+3. Выберите **Python 3**, ветку `main`, тариф **Free**.
+4. **Build Command:** `pip install -r requirements.txt`.
+5. **Start Command:** `python -u -m rafflebot.web`.
+6. Переменные окружения:
 
-Бот получает сообщения через polling: ему не нужен сайт, порт или webhook. Для одного токена должен работать только один экземпляр. Ошибка Telegram 409 означает, что этот токен уже используется другим процессом. Автоматическое обновление сервиса из GitHub использует тот же постоянный диск.
+| Имя | Значение |
+|---|---|
+| `BOT_TOKEN` | Токен бота из BotFather |
+| `DATABASE_URL` | Прямая строка подключения к отдельной базе Neon |
+| `WEBHOOK_SECRET` | Случайная строка из 32–256 латинских букв, цифр, `_` или `-` |
 
-## Сохранение данных
+HTTPS-адрес Render подставляется автоматически через `RENDER_EXTERNAL_URL`. Для другого хостинга задайте `WEBHOOK_URL=https://адрес-сервиса`. **Health Check Path:** `/health`.
 
-`BOT_DB=/var/data/bot.sqlite3` размещает базу на постоянном диске. Здесь сохраняются пользователи, черновики, настройки старых розыгрышей, участники и очереди уведомлений. Без диска эти данные теряются при перезапуске или обновлении Render.
-
-Исходный код не содержит вашу локальную базу: новый сервис создаст пустую. Для переноса старых розыгрышей нужно отдельно перенести базу после остановки локального бота. Создайте согласованную копию командой:
+7. Перед запуском остановите локального бота и отключите автозапуск:
 
 ```powershell
-python tools/backup_db.py --output data/render-transfer.sqlite3
+powershell -NoProfile -ExecutionPolicy Bypass -File .\stop-bot.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\remove-autostart.ps1
 ```
 
-Храните эту копию приватно. Перед первым запуском бота на Render разместите её на диске как `/var/data/bot.sqlite3` (например, через доступ Render по SSH/SCP). Не заменяйте базу, пока бот работает. После переноса не запускайте прежнюю локальную копию параллельно с Render.
+8. Нажмите **Deploy Web Service**. В Logs появится `Webhook bot @... ready`. Бот сам подключит webhook, сохранив ожидающие сообщения Telegram. Проверьте `/start`.
 
-Документация: [Background Workers](https://render.com/docs/background-workers), [Persistent Disks](https://render.com/docs/disks), [Blueprint](https://render.com/docs/infrastructure-as-code).
+Вместо ручного создания можно использовать **New → Blueprint**: `render.yaml` задаёт бесплатный Web Service, команды и секрет. База подключается отдельно; платный Worker или диск не создаются.
+
+## Перенос прежних пользователей и розыгрышей
+
+Внешняя база должна быть отдельной и пустой. Остановите локального бота, затем:
+
+```powershell
+python -m pip install -r requirements.txt
+python tools/backup_db.py --output data/final-transfer.sqlite3
+```
+
+Приватно добавьте `DATABASE_URL` в локальный `.env`, выполните **до запуска Render**:
+
+```powershell
+python tools/migrate_postgres.py --source data/final-transfer.sqlite3
+```
+
+Скрипт переносит пользователей, настройки, участников, итоги и очереди в одной транзакции. В непустую базу не пишет. SQLite-копию и `.env` нельзя загружать в GitHub. После переноса удалите `DATABASE_URL` из локального `.env`, если компьютер должен остаться в режиме SQLite. Не запускайте локального бота параллельно с Render.
+
+## Итоги по времени и сон сервиса
+
+Telegram-сообщение будит сервис через webhook. Во время сна задачи не выполняются: без внешнего расписания просроченные итоги обрабатываются после пробуждения. Итоги по числу участников и ручные итоги выполняются при соответствующем событии.
+
+Для автоматических итогов без сообщений настройте внешний HTTP-планировщик:
+
+- Метод **POST**.
+- Адрес `https://ВАШ-СЕРВИС.onrender.com/tasks`.
+- Заголовок `Authorization: Bearer ЗНАЧЕНИЕ_WEBHOOK_SECRET`.
+- Запуск в нужное время или с выбранным интервалом; холодный запуск требует повторных попыток и таймаута не меньше 90 секунд.
+
+Запрос будит сервис и ставит проверку итогов в очередь. Ответ `202` означает принятие, а не завершение рассылки. `/health` только проверяет сервер и не заменяет `/tasks`. Не публикуйте секрет и не передавайте его в URL.
+
+Частые запросы удерживают сервис активным и расходуют часы Render, общие для workspace. Проверяйте лимиты Render и Neon. Веб-режим запрещает локальную SQLite, чтобы база не терялась при обновлении.
+
+Документация: [Render Free](https://render.com/docs/free), [Telegram Webhooks](https://core.telegram.org/bots/api#setwebhook), [Neon](https://neon.com/docs).

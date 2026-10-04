@@ -1,1 +1,1 @@
-# Uses only the Python standard library; no external dependencies.
+psycopg[binary]>=3.2,<4

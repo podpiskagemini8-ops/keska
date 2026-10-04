@@ -14,5 +14,10 @@ def load():
     token = os.environ.get("BOT_TOKEN", "")
     if not token or ":" not in token:
         raise RuntimeError("Укажите BOT_TOKEN в переменных окружения или файле .env")
+    database_url = os.environ.get('DATABASE_URL', '')
+    if database_url:
+        if not database_url.startswith(('postgres://', 'postgresql://')):
+            raise RuntimeError('DATABASE_URL должен быть строкой подключения PostgreSQL')
+        return token, database_url
     path = Path(os.environ.get("BOT_DB", "data/bot.sqlite3"))
     return token, str(path if path.is_absolute() else ROOT / path)
