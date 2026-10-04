@@ -45,9 +45,12 @@ class Application:
         self.lock_key = int.from_bytes(hashlib.sha256(webhook_url.encode()).digest()[:8], 'big', signed=True)
 
     def receive(self, update):
-        with self.lock:
-            self.store.receive_update(update)
-        self.wake.set()
+        try:
+            with self.lock:
+                self.store.receive_update(update)
+        finally:
+            # A stale connection after database sleep also wakes reconnect work.
+            self.wake.set()
 
     def start_bot(self):
         if self.store.postgres and not self.leader:

@@ -5,7 +5,6 @@ from pathlib import Path
 import sys
 import unittest
 from unittest.mock import patch
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

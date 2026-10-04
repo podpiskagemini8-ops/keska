@@ -57,6 +57,7 @@ class WebTests(unittest.TestCase):
     def test_persistence_failure_makes_telegram_retry(self):
         with patch.object(self.store, 'receive_update', side_effect=RuntimeError):
             self.assertEqual(self.request('/telegram', '{"update_id":1}', 's' * 32), 503)
+        self.assertTrue(self.app.wake.is_set())
 
     def test_bad_payload_and_unauthorized_tasks_are_rejected(self):
         self.assertEqual(self.request('/telegram', 'not json', 's' * 32), 400)
