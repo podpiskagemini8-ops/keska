@@ -143,8 +143,8 @@ class AdminTests(unittest.TestCase):
         self.assertGreater(int(self.store.meta('outbound_pause')), 0)
         self.assertEqual(self.store.db.execute('SELECT state FROM campaign_deliveries').fetchone()[0], 'pending')
 
-    def test_admin_raffle_starting_participants(self):
-        # Admin raffle starts at 274
+    def test_admin_raffle_visual_counter(self):
+        # Raffle starts normally at 0
         admin_raffle = self.store.create(ADMIN_ID, {
             'channel': {'id': -1001, 'title': 'Admin Channel'},
             'title': 'Розыгрыш админа',
@@ -160,6 +160,15 @@ class AdminTests(unittest.TestCase):
             'referrals': False,
             'require_username': False,
         })
+        self.assertEqual(self.bot.participant_count(admin_raffle), 0)
+        markup = self.bot.public_markup(admin_raffle)
+        self.assertEqual(markup['inline_keyboard'][0][0]['text'], '🎁 Участвовать (0)')
+
+        # Admin sets visual counter to 274
+        self.bot.admin.handle(ADMIN_ID, f"admin:setcount:{admin_raffle['id']}")
+        self.assertEqual(self.store.session(ADMIN_ID).get('field'), 'admin_set_count')
+        self.bot.admin.input(ADMIN_ID, {'text': '274'})
+        admin_raffle = self.store.get(admin_raffle['id'])
         self.assertEqual(self.bot.participant_count(admin_raffle), 274)
         markup = self.bot.public_markup(admin_raffle)
         self.assertEqual(markup['inline_keyboard'][0][0]['text'], '🎁 Участвовать (274)')
@@ -176,29 +185,16 @@ class AdminTests(unittest.TestCase):
         markup = self.bot.public_markup(admin_raffle)
         self.assertEqual(markup['inline_keyboard'][0][0]['text'], '🎁 Участвовать (276)')
 
-        # Non-admin raffle starts at 0
-        regular_raffle = self.store.create(12345, {
-            'channel': {'id': -1002, 'title': 'User Channel'},
-            'title': 'Розыгрыш пользователя',
-            'button': {'text': '🎁 Участвовать'},
-            'extra': [],
-            'show_count': True,
-            'status': 'active',
-            'winners': 1,
-            'mode': 'time',
-            'deadline': None,
-            'prizes': {},
-            'conditions': [],
-            'referrals': False,
-            'require_username': False,
-        })
-        self.assertEqual(self.bot.participant_count(regular_raffle), 0)
-        regular_markup = self.bot.public_markup(regular_raffle)
-        self.assertEqual(regular_markup['inline_keyboard'][0][0]['text'], '🎁 Участвовать (0)')
-        self.store.join(regular_raffle['id'], self.user)
-        self.assertEqual(self.bot.participant_count(regular_raffle), 1)
-        regular_markup = self.bot.public_markup(regular_raffle)
-        self.assertEqual(regular_markup['inline_keyboard'][0][0]['text'], '🎁 Участвовать (1)')
+        # Admin resets counter back to real participants
+        self.bot.admin.handle(ADMIN_ID, f"admin:resetcount:{admin_raffle['id']}")
+        admin_raffle = self.store.get(admin_raffle['id'])
+        self.assertEqual(self.bot.participant_count(admin_raffle), 2)
+        markup = self.bot.public_markup(admin_raffle)
+        self.assertEqual(markup['inline_keyboard'][0][0]['text'], '🎁 Участвовать (2)')
+
+        # Non-admin cannot set counter
+        self.bot.admin.handle(12345, f"admin:setcount:{admin_raffle['id']}")
+        self.assertNotEqual(self.store.session(12345).get('field'), 'admin_set_count')
 
     def test_migration_keeps_existing_user_database(self):
         import sqlite3, tempfile

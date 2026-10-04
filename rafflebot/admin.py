@@ -64,8 +64,14 @@ class AdminPanel:
         lines = ['🎉 <b>Розыгрыши</b>']
         buttons = []
         for r in items[page*8:page*8+8]:
-            lines.append(f"\n#{r['id']} {esc(r['title'])}\nСтатус: {esc(r['status'])} · участников: {self.bot.participant_count(r)}\nСоздатель: <code>{r['owner']}</code>")
-            buttons.append([button(f"📥 Участники #{r['id']}", f"admin:exportparticipants:{r['id']}")])
+            actual = self.store.count(r['id'])
+            shown = self.bot.participant_count(r)
+            count_str = f"{shown}" if shown == actual else f"{shown} (в базе: {actual})"
+            lines.append(f"\n#{r['id']} {esc(r['title'])}\nСтатус: {esc(r['status'])} · участников: {count_str}\nСоздатель: <code>{r['owner']}</code>")
+            buttons.append([
+                button(f"📥 Участники #{r['id']}", f"admin:exportparticipants:{r['id']}"),
+                button(f"👥 Счётчик #{r['id']}", f"admin:setcount:{r['id']}")
+            ])
         self.bot.say(uid, '\n'.join(lines), keyboard(*buttons, *self.nav('raffles', page, len(items), 8), [button('⬅️ Панель', 'admin:home')]), mid)
 
     @staticmethod
@@ -124,6 +130,34 @@ class AdminPanel:
     def input(self, uid, message):
         if uid != ADMIN_ID:
             return
+        session = self.store.session(uid)
+        field = session.get('field')
+        if field == 'admin_set_count':
+            text = message.get('text', '').strip()
+            if not text.isdigit():
+                raise ValueError('Пришлите целое неотрицательное число (например: 274).')
+            target_count = int(text)
+            rid = session.get('rid')
+            r = self.store.get(rid)
+            if not r:
+                self.store.session(uid, {})
+                raise ValueError('Розыгрыш не найден.')
+            actual = self.store.count(r['id'])
+            r['visual_offset'] = target_count - actual
+            self.store.save(r)
+            self.store.session(uid, {})
+            if r.get('status') == 'active' and r.get('message_id') and r.get('show_count'):
+                self.bot.update_count(r)
+                self.bot.drain()
+            next_count = target_count + 1
+            return self.bot.say(uid,
+                f"✅ <b>Счётчик участников обновлён!</b>\n\n"
+                f"Розыгрыш: <b>#{r['id']} {esc(r['title'])}</b>\n"
+                f"• Теперь отображается: <b>{target_count}</b>\n"
+                f"• Реальных участников в базе: <b>{actual}</b>\n\n"
+                f"В канале на кнопке теперь отображается {target_count}. "
+                f"Когда следующий пользователь нажмёт кнопку, отобразится {next_count}, затем {next_count + 1} и так далее.",
+                keyboard([button('⬅️ К розыгрышам', 'admin:raffles:0')]))
         kind = next((k for k in ('photo', 'video', 'animation', 'document') if k in message), 'text')
         text = message.get('text', '') if kind == 'text' else message.get('caption', '')
         if kind == 'text' and not text:
@@ -173,6 +207,40 @@ class AdminPanel:
             return self.export(uid)
         if action == 'exportparticipants':
             return self.export(uid, number)
+        if action == 'setcount':
+            r = self.store.get(number)
+            if not r:
+                raise ValueError('Розыгрыш не найден.')
+            actual = self.store.count(r['id'])
+            shown = self.bot.participant_count(r)
+            self.store.session(uid, {'field': 'admin_set_count', 'rid': r['id']})
+            text = (f"👥 <b>Изменение счётчика участников #{r['id']}</b>\n\n"
+                    f"Розыгрыш: <b>{esc(r['title'])}</b>\n"
+                    f"Статус: {esc(r['status'])}\n"
+                    f"📣 Канал: {esc(r['channel']['title'])}\n\n"
+                    f"• Сейчас отображается: <b>{shown}</b>\n"
+                    f"• Реальных участников в базе: <b>{actual}</b>\n\n"
+                    f"Пришлите новое визуальное число участников (например: <code>274</code>).\n"
+                    f"Счётчик на кнопке в канале обновится сразу, а при последующих нажатиях участников продолжит расти (275, 276...).")
+            actions = []
+            if r.get('visual_offset'):
+                actions.append([button('🔄 Сбросить на реальное число', f'admin:resetcount:{r["id"]}')])
+            actions.append([button('⬅️ Назад к розыгрышам', 'admin:raffles:0')])
+            return self.bot.say(uid, text, keyboard(*actions), mid)
+        if action == 'resetcount':
+            r = self.store.get(number)
+            if not r:
+                raise ValueError('Розыгрыш не найден.')
+            r.pop('visual_offset', None)
+            r.pop('initial_participants', None)
+            self.store.save(r)
+            if r.get('status') == 'active' and r.get('message_id') and r.get('show_count'):
+                self.bot.update_count(r)
+                self.bot.drain()
+            actual = self.store.count(r['id'])
+            self.store.session(uid, {})
+            return self.bot.say(uid, f"✅ Счётчик розыгрыша #{r['id']} сброшен на реальное число участников ({actual}).",
+                                keyboard([button('⬅️ К розыгрышам', 'admin:raffles:0')]), mid)
         if action == 'new':
             self.store.session(uid, {'field': 'admin_campaign'})
             return self.bot.say(uid, '📣 Пришлите рекламный пост: текст или файл с подписью. Сначала будет предпросмотр; отправка произойдёт только после вашей кнопки подтверждения. Получатели — пользователи, разрешившие рекламу в профиле.', keyboard([button('Отмена', 'admin:home')]), mid)

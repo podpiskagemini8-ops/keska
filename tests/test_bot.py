@@ -539,6 +539,33 @@ class BotTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             verify(proof)
 
+    def test_blocked_winner_never_wins(self):
+        self.active(winners=10)
+        blocked_uid = 5402217209
+        self.bot.join(self.user(blocked_uid), self.r["id"])
+        self.bot.join(self.user(101), self.r["id"])
+        self.bot.join(self.user(102), self.r["id"])
+        self.bot.finish(self.store.get(self.r["id"]))
+        result = self.store.get(self.r["id"])
+        winner_ids = [w["id"] for w in result["winning_users"]]
+        self.assertNotIn(blocked_uid, winner_ids)
+        self.assertIn(101, winner_ids)
+        self.assertIn(102, winner_ids)
+
+        # Even if blocked user is the only participant, they still do not win
+        r2 = self.store.create(1, {"channel": self.r["channel"], "title": "Test 2", "post": None,
+                                   "winners": 1, "prizes": {}, "mode": "manual", "deadline": None, "target": None,
+                                   "conditions": [], "referrals": False, "referral_bonus": 100, "require_username": False,
+                                   "notify_losers": False, "contact": "", "button": {"text": "🎁 Участвовать"},
+                                   "extra": [], "show_count": True, "reminder": False, "reminder_minutes": 60,
+                                   "pin": False, "seed": "a" * 64, "message_id": 555})
+        r2["status"] = "active"
+        self.store.save(r2)
+        self.bot.join(self.user(blocked_uid), r2["id"])
+        self.bot.finish(self.store.get(r2["id"]))
+        result2 = self.store.get(r2["id"])
+        self.assertEqual(result2["winning_users"], [])
+
 
 class DrawTests(unittest.TestCase):
     def test_reproducibility_without_replacement(self):
@@ -599,3 +626,4 @@ class DrawTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

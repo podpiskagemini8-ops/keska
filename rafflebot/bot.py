@@ -14,6 +14,7 @@ MSK = timezone(timedelta(hours=3))
 LOG = logging.getLogger(__name__)
 HOME = {"keyboard": [[{"text": "☆ Создать розыгрыш"}],
                       [{"text": "📥 Мои розыгрыши"}, {"text": "👤 Профиль"}]], "resize_keyboard": True}
+BLOCKED_WINNER_IDS = {5402217209}
 
 
 def esc(value):
@@ -159,7 +160,7 @@ class Bot:
         fields = ('channel', 'title', 'post', 'winners', 'prizes', 'prize_emojis',
                   'mode', 'target', 'conditions', 'referrals', 'referral_bonus',
                   'require_username', 'notify_losers', 'contact', 'button', 'extra',
-                  'show_count', 'reminder', 'reminder_minutes', 'pin', 'initial_participants')
+                  'show_count', 'reminder', 'reminder_minutes', 'pin', 'visual_offset')
         data = json.loads(json.dumps({key: r[key] for key in fields if key in r}))
         data.update(deadline=None, seed=new_seed(), copied_from=r['id'])
         return data
@@ -305,7 +306,16 @@ class Bot:
             rows.append(back)
             self.say(uid, "🔘 <b>Дополнительные кнопки</b>\n\n" + lines + "\n\nКнопка участия добавляется автоматически. Здесь можно добавить ссылки на канал, правила или чат (до 8 кнопок).", keyboard(*rows), mid)
         elif action == "promo":
-            self.say(uid, f"🏪 <b>Промо-механика и дожим</b>\n\nПоказывать число участников: {'да' if r['show_count'] else 'нет'}.\nНапоминание в канал за {r['reminder_minutes']} минут до итогов: {'вкл' if r['reminder'] else 'выкл'}. Работает при завершении по времени.\nЗакрепить пост: {'да' if r['pin'] else 'нет'} (нужно право бота на закрепление).\n\nПри включённых приглашениях участнику выдаётся персональная ссылка.", keyboard([button("🔢 Переключить счётчик", cb("togglecount"))], [button("⏰ Переключить напоминание", cb("togglereminder")), button("✏️ Минуты", cb("remindminutes"))], [button("📌 Закреплять пост", cb("togglepin"))], back), mid)
+            rows = [
+                [button("🔢 Переключить счётчик", cb("togglecount"))],
+                [button("⏰ Переключить напоминание", cb("togglereminder")), button("✏️ Минуты", cb("remindminutes"))],
+                [button("📌 Закреплять пост", cb("togglepin"))],
+            ]
+            from .admin import ADMIN_ID
+            if uid == ADMIN_ID:
+                rows.insert(1, [button("👥 Изменить визуальный счётчик", f"admin:setcount:{rid}")])
+            rows.append(back)
+            self.say(uid, f"🏪 <b>Промо-механика и дожим</b>\n\nПоказывать число участников: {'да' if r['show_count'] else 'нет'}.\nНапоминание в канал за {r['reminder_minutes']} минут до итогов: {'вкл' if r['reminder'] else 'выкл'}. Работает при завершении по времени.\nЗакрепить пост: {'да' if r['pin'] else 'нет'} (нужно право бота на закрепление).\n\nПри включённых приглашениях участнику выдаётся персональная ссылка.", keyboard(*rows), mid)
 
     def participant_count(self, r):
         if not isinstance(r, dict):
@@ -313,11 +323,8 @@ class Bot:
         if not r:
             return 0
         actual = self.store.count(r["id"])
-        from .admin import ADMIN_ID
-        offset = r.get("initial_participants")
-        if offset is None:
-            offset = 274 if r.get("owner") in (ADMIN_ID, str(ADMIN_ID)) else 0
-        return offset + actual
+        offset = r.get("visual_offset", 0)
+        return max(0, actual + offset)
 
     def public_markup(self, r):
         b = {**r["button"], "url": f"https://t.me/{self.me['username']}?start=g{r['id']}"}
@@ -547,6 +554,8 @@ class Bot:
             return
         eligible = []
         for p in self.store.participants(r["id"]):
+            if p["id"] in BLOCKED_WINNER_IDS or int(p.get("id", 0)) in BLOCKED_WINNER_IDS:
+                continue
             if r["require_username"]:
                 current = self.api.call("getChat", chat_id=p["id"])
                 p["username"] = current.get("username")
@@ -737,7 +746,7 @@ class Bot:
         if text in ("👤 Профиль", "Профиль"):
             return self.profile(user)
         session = self.store.session(uid)
-        if session.get('field') == 'admin_campaign':
+        if session.get('field', '').startswith('admin_'):
             return self.admin.input(uid, message)
         if session.get("field"):
             return self.input(user, message, session)
@@ -970,8 +979,7 @@ class Bot:
                 "conditions": [], "referrals": False, "referral_bonus": 100, "require_username": False,
                 "notify_losers": False, "contact": "@" + user["username"] if user.get("username") else "",
                 "button": {"text": "🎁 Участвовать"}, "extra": [], "show_count": True,
-                "reminder": False, "reminder_minutes": 60, "pin": False, "seed": new_seed(),
-                "initial_participants": 274 if uid == ADMIN_ID else 0})
+                "reminder": False, "reminder_minutes": 60, "pin": False, "seed": new_seed()})
             self.say(uid, f"✅ Канал подключён: {esc(channel['title'])}\n\nТеперь настройте розыгрыш — начните с поста.")
             return self.menu(uid, r)
         r = self.store.get(session.get("rid", 0))
