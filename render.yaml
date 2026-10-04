@@ -1,0 +1,19 @@
+services:
+  - type: worker
+    name: keska-raffle-bot
+    runtime: python
+    plan: 0.5c-512mb
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -u run.py
+    numInstances: 1
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: BOT_DB
+        value: /var/data/bot.sqlite3
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    disk:
+      name: raffle-data
+      mountPath: /var/data
+      sizeGB: 1
