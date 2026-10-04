@@ -186,6 +186,9 @@ def main():
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     token, database, webhook_url, secret = settings()
     store = Store(database)
+    if os.environ.get('IMPORT_DATA_BASE64'):
+        from .migration import import_snapshot
+        import_snapshot(store, os.environ['IMPORT_DATA_BASE64'])
     if os.environ.get('CHECK_POSTGRES') == '1' and not store.meta('postgres_checked_v1'):
         from tools.check_postgres import check
         check(database)

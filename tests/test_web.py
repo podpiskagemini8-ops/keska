@@ -1,4 +1,5 @@
 import http.client
+import base64
 from http.server import ThreadingHTTPServer
 import json
 import tempfile
@@ -7,6 +8,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from rafflebot.postgres import Row, translate
+from rafflebot.migration import import_snapshot
 from rafflebot.storage import Store
 from rafflebot.web import Application, handler, settings
 
@@ -87,6 +89,21 @@ class WebTests(unittest.TestCase):
         row = Row(id=8259479085, title='test')
         self.assertEqual(row[0], row['id'])
         self.assertEqual(row[1], 'test')
+
+    def test_initial_import_is_atomic_and_does_not_duplicate_data(self):
+        payload = {'version': 1, 'tables': {'users': [{'id': 8259479085, 'data': '{}', 'first_seen': 1, 'last_seen': 1, 'can_message': 1}]}}
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+        import_snapshot(self.store, encoded)
+        import_snapshot(self.store, encoded)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM users').fetchone()[0], 1)
+        self.assertEqual(self.store.meta('import_completed_v1'), '1')
+
+    def test_initial_import_rolls_back_invalid_data(self):
+        payload = {'version': 1, 'tables': {'users': [{'id': 5, 'data': '{}'}, {'id': 6, 'invalid_column': 1}]}}
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+        with self.assertRaises(RuntimeError):
+            import_snapshot(self.store, encoded)
+        self.assertEqual(self.store.db.execute('SELECT count(*) FROM users').fetchone()[0], 0)
 
 
 if __name__ == '__main__':
