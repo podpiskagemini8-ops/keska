@@ -230,6 +230,7 @@ class Bot:
             if r["status"] == "active":
                 rows.append([button("🏁 Подвести итоги", cb("finish"), style="success")])
                 rows.append([button("⛔ Отменить розыгрыш", cb("cancel"), style="danger")])
+                rows.append([button("📤 Повторно отправить в канал", cb("repost"))])
             if r["status"] == "finished":
                 text += '\n\nПобедителям отправляются личные уведомления.'
             if r['status'] in ('finished', 'canceled'):
@@ -469,6 +470,19 @@ class Bot:
             self.store.enqueue(r["id"], f"pin:{r['id']}", "pinChatMessage", {"chat_id": r["channel"]["id"], "message_id": r["message_id"], "disable_notification": True})
         self.say(uid, "✅ Розыгрыш опубликован. Настройки зафиксированы. Участники входят через кнопку под постом.")
         self.menu(uid, r)
+
+    def repost(self, uid, r):
+        self.check_channel(r['channel']['id'], uid)
+        method, params = self.compose(r)
+        message = self.api.call(method, chat_id=r['channel']['id'], reply_markup=self.public_markup(r), **params)
+        r['message_id'] = message['message_id']
+        self.store.save(r)
+        with self.store.db:
+            self.store.db.execute("UPDATE outbox SET state='superseded' WHERE task_key=?", (f"counter:{r['id']}",))
+        if r['pin']:
+            self.store.enqueue(r['id'], f"repostpin:{r['id']}:{r['message_id']}", 'pinChatMessage', {'chat_id': r['channel']['id'], 'message_id': r['message_id'], 'disable_notification': True})
+        self.say(uid, '✅ Пост повторно отправлен в канал. Участники и дата итогов сохранены.')
+        return self.menu(uid, r)
 
     def subscription(self, uid, conditions):
         missing = []
@@ -791,6 +805,10 @@ class Bot:
             return self.menu(uid, r, mid)
         if action == 'repeat':
             return self.repeat(uid, r, mid)
+        if action == 'repost' and r['status'] == 'active':
+            return self.say(uid, 'Отправить пост в канал ещё раз? Участники и настройки сохранятся. Если старый пост ещё существует, в канале появится дополнительная публикация.', keyboard([button('📤 Отправить', f'g:{rid}:confirmrepost')], [button('⬅️ Назад', f'g:{rid}:menu')]), mid)
+        if action == 'confirmrepost' and r['status'] == 'active':
+            return self.repost(uid, r)
         if r["status"] == "publishing":
             if action == "recover":
                 return self.ask(uid, rid, "recover", "Перешлите опубликованный ботом пост из того же канала. Кнопка участия должна вести на этот розыгрыш.", mid)

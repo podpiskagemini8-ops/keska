@@ -80,6 +80,28 @@ class BotTests(unittest.TestCase):
     def user(uid, username=True):
         return {"id": uid, "first_name": f"Человек {uid}", "is_bot": False, **({"username": f"user_{uid}"} if username else {})}
 
+    def test_repost_preserves_raffle_and_participants(self):
+        self.active()
+        self.bot.join(self.user(101), self.r['id'])
+        before = self.store.get(self.r['id'])
+        self.bot.callback(OWNER, f"g:{self.r['id']}:repost", 1)
+        self.assertEqual(self.store.get(self.r['id']), before)
+        self.bot.callback(OWNER, f"g:{self.r['id']}:confirmrepost", 1)
+        after = self.store.get(self.r['id'])
+        self.assertNotEqual(after['message_id'], before['message_id'])
+        self.assertEqual({k: v for k, v in after.items() if k != 'message_id'}, {k: v for k, v in before.items() if k != 'message_id'})
+        self.assertEqual(self.store.count(after['id']), 1)
+        with self.assertRaises(ValueError):
+            self.bot.callback(self.user(102), f"g:{after['id']}:confirmrepost", 1)
+
+    def test_repost_failure_keeps_original_post(self):
+        self.active()
+        before = self.store.get(self.r['id'])
+        self.api.fail['sendMessage'] = TelegramError('failed', 400)
+        with self.assertRaises(TelegramError):
+            self.bot.callback(OWNER, f"g:{self.r['id']}:confirmrepost", 1)
+        self.assertEqual(self.store.get(self.r['id']), before)
+
     def test_creation_and_every_settings_screen(self):
         self.assertEqual(self.r["status"], "draft")
         for action in ("winners", "prizes", "timing", "conditions", "bonuses", "guard", "extra", "promo"):
